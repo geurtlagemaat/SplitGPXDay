@@ -1,12 +1,14 @@
-import os
+import os, shutil
 import string
 from collections import OrderedDict
 from glob import glob
 
 from datetime import datetime
+from time import sleep
+
 from lxml import etree
 
-GPXDATAPATH = "C:\Projecten\Oriana\Bliknet\SplitGPXDay\gpxdata\/2015"
+GPXDATAPATH = "C:\Projecten\Oriana\Bliknet\SplitGPXDay\gpxdata\/2017"
 GPXNAMESPACE_URL = 'http://www.topografix.com/GPX/1/1'
 TRACKPOINTEXTENSIONS= 'http://www.garmin.com/xmlschemas/TrackPointExtension/v2'
 GPXNAMESPACES = { 'gpx' : GPXNAMESPACE_URL, 'gpxtpx' : TRACKPOINTEXTENSIONS}
@@ -56,10 +58,6 @@ def trkptToDics(trkpt):
 
 def dictToFile(GPXPoints, datetimeStamp):
     if os.path.isdir(GPXDATAPATH):
-        exportDir = os.path.join(GPXDATAPATH, 'export')
-        if not os.path.isdir(exportDir):
-            os.makedirs(exportDir)
-
         gpxElem = etree.fromstring(GPXFILETEMPLATE)
         metaDataElem = etree.SubElement(gpxElem, '{%s}metadata' % GPXNAMESPACE_URL)
         timeElem = etree.SubElement(metaDataElem, '{%s}time' % GPXNAMESPACE_URL)
@@ -99,9 +97,21 @@ def dictToFile(GPXPoints, datetimeStamp):
         with open(exportFileName, "w") as text_file:
             text_file.write(exportXMLString)
 
+def daysFromEpoch(date):
+    epoch = datetime.utcfromtimestamp(0)
+    d = date - epoch
+    return d.days
+
 if __name__ == '__main__':
     # parse all *.gpx files in GPXDATAPATH
     if os.path.isdir(GPXDATAPATH):
+        exportDir = os.path.join(GPXDATAPATH, 'export')
+        if os.path.isdir(exportDir):
+            print "Removing existing export location: %s" % exportDir
+            shutil.rmtree(exportDir)
+            sleep(2)
+        os.makedirs(exportDir)
+
         myFiles = [y for x in os.walk(GPXDATAPATH) for y in glob(os.path.join(x[0], '*.gpx'))]
         for myFile in myFiles:
             print "parsing: %s" % myFile
@@ -128,18 +138,15 @@ if __name__ == '__main__':
         exportDateTime = None
         dayGPXPoints = {}
         for datetimeStamp, GPXPoint in sortedGPXPoints.iteritems():
-            if exportDateTime is None or \
-               datetimeStamp.timetuple().tm_yday > exportDateTime.timetuple().tm_yday: # julian date diff.
+            if exportDateTime is None:
+                exportDateTime = datetimeStamp
+            elif daysFromEpoch(datetimeStamp) > daysFromEpoch(exportDateTime):
+               #datetimeStamp.timetuple().tm_yday > exportDateTime.timetuple().tm_yday: # julian date diff.
                if len(dayGPXPoints)>0:
                    sortedGPXPoints = OrderedDict(sorted(dayGPXPoints.items(), key=lambda t: t[0]))
                    dictToFile(sortedGPXPoints, exportDateTime)
                # clear dict and start new
                dayGPXPoints.clear()
                exportDateTime=datetimeStamp
-               dayGPXPoints[datetimeStamp]=GPXPoint
-            else:
-                # not a new day
-                if exportDateTime is None:
-                    exportDateTime = datetimeStamp
-                dayGPXPoints[datetimeStamp]=GPXPoint
+            dayGPXPoints[datetimeStamp]=GPXPoint
         print "ready!"

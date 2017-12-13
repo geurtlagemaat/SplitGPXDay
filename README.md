@@ -5,7 +5,8 @@ and writes the trackpoint in daily files (sorted and duplicates removed).
 Ready for import in Google Maps.
 Work in progress. 
 
-TODO:
-+ Setup
-+ Requirements
-+ Doc
++ TODO: command line params
++ TODO: days per file param
++ TODO: remove export location
++ TODO: Requirements
++ TODO: Doc
