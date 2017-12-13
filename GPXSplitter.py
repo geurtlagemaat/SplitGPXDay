@@ -6,9 +6,13 @@ from glob import glob
 from datetime import datetime
 from time import sleep
 
+import argparse
+
+import sys
 from lxml import etree
 
-GPXDATAPATH = "C:\Projecten\Oriana\Bliknet\SplitGPXDay\gpxdata\/2017"
+GPXDATAPATH = "C:\Projecten\Oriana\Bliknet\SplitGPXDay\gpxdata\/2015"
+
 GPXNAMESPACE_URL = 'http://www.topografix.com/GPX/1/1'
 TRACKPOINTEXTENSIONS= 'http://www.garmin.com/xmlschemas/TrackPointExtension/v2'
 GPXNAMESPACES = { 'gpx' : GPXNAMESPACE_URL, 'gpxtpx' : TRACKPOINTEXTENSIONS}
@@ -30,10 +34,41 @@ GPXFILETEMPLATE = "<?xml version='1.0' encoding='UTF-8' standalone='no' ?>\
                         http://www.garmin.com/xmlschemas/TripExtensionsv1.xsd'>\
                    </gpx>"
 
-GPXPoints = {}
+
+
+def parseGPXFilesToDict(gpxlocation):
+    """
+    parse all *.gpx files in gpxlocation (recursive) to a dictionary
+    :param gpxlocation: location to GPX Files to be parsed
+    :type gpxlocation: string
+    :return: dictionary containing trackpoint info
+    """
+    GPXPoints = {}
+    myFiles = [y for x in os.walk(gpxlocation) for y in glob(os.path.join(x[0], '*.gpx'))]
+    for myFile in myFiles:
+        print "parsing: %s" % myFile
+        gpxDom = etree.parse(myFile)
+        trkpts = gpxDom.xpath('//gpx:trkpt', namespaces=GPXNAMESPACES)
+        # get all trkpt elements and store there data in a dictionary
+        for trkpt in trkpts:
+            trkptDateTime = trkpt.xpath('gpx:time', namespaces=GPXNAMESPACES)[0]
+            readTimeStamp = trkptDateTime.text
+            gpxTimestamp = None
+            # remove zulu marking (not needed for building correct sequence & sorting
+            if readTimeStamp.endswith('Z'):
+                readTimeStamp = string.replace(readTimeStamp, 'Z', '')
+                gpxTimestamp = datetime.strptime(readTimeStamp, '%Y-%m-%dT%H:%M:%S')
+            else:
+                gpxTimestamp = datetime.strptime(readTimeStamp, '%Y-%m-%dT%H:%M:%S')
+            if gpxTimestamp is not None:
+                GPXPoints[gpxTimestamp] = trkptToDics(trkpt=trkpt)  # TODO duplicates will be handled correct? or check differences?
+    return OrderedDict(sorted(GPXPoints.items(), key=lambda t: t[0]))
 
 def trkptToDics(trkpt):
     """
+    Parses lxml trackpoint element subtree to a dictionary
+    :param trkpt: lxml Element using GPX format (See below)
+    :return: dict with trackpoint info
     <trkpt lat="52.244421" lon="6.223868">
         <ele>-35.43</ele>
         <time>2013-05-31T09:11:08Z</time>
@@ -56,8 +91,20 @@ def trkptToDics(trkpt):
         myTrkpt['speed']=trkpt.xpath('gpx:extensions/gpxtpx:TrackPointExtension/gpxtpx:speed', namespaces=GPXNAMESPACES)[0].text
     return myTrkpt
 
-def dictToFile(GPXPoints, datetimeStamp):
-    if os.path.isdir(GPXDATAPATH):
+def dictToFile(GPXPoints, datetimeStamp, exportDir):
+    """
+    Write a dictionary of trackpoints to a file using date as filename
+    :param GPXPoints:  trackpoint info
+    :type GPXPoints: dictionary
+    :param datetimeStamp: datetime with the date of the GPX track
+    :type datetimeStamp:: datetime
+    :param exportDir: string with the export location
+    :type exportDir: string
+    :return: nothing
+    """
+
+    if len(dayGPXPoints) > 0:
+        sortedGPXPoints = OrderedDict(sorted(GPXPoints.items(), key=lambda t: t[0]))
         gpxElem = etree.fromstring(GPXFILETEMPLATE)
         metaDataElem = etree.SubElement(gpxElem, '{%s}metadata' % GPXNAMESPACE_URL)
         timeElem = etree.SubElement(metaDataElem, '{%s}time' % GPXNAMESPACE_URL)
@@ -72,7 +119,7 @@ def dictToFile(GPXPoints, datetimeStamp):
 
         trksegElem = etree.SubElement(trkElem, '{%s}trkseg' % GPXNAMESPACE_URL)
 
-        for datetimeStamp, GPXPoint in GPXPoints.iteritems():
+        for datetimeStamp, GPXPoint in sortedGPXPoints.iteritems():
             trkptElem = etree.SubElement(trksegElem, "{%s}trkpt" % GPXNAMESPACE_URL)
             trkptElem.set('lat', GPXPoint['lat'])
             trkptElem.set('lon', GPXPoint['lon'])
@@ -94,8 +141,12 @@ def dictToFile(GPXPoints, datetimeStamp):
 
         exportFileName = os.path.join(exportDir, "%s.gpx" % datetime.strftime(datetimeStamp, '%Y%m%d'))
         exportXMLString = etree.tostring(gpxElem, pretty_print=True)
-        with open(exportFileName, "w") as text_file:
-            text_file.write(exportXMLString)
+        try:
+            with open(exportFileName, "w") as text_file:
+                text_file.write(exportXMLString)
+                print "save: %s done." % exportFileName
+        except:
+            print "error writing GPXData to %s." % exportFileName
 
 def daysFromEpoch(date):
     epoch = datetime.utcfromtimestamp(0)
@@ -103,50 +154,36 @@ def daysFromEpoch(date):
     return d.days
 
 if __name__ == '__main__':
-    # parse all *.gpx files in GPXDATAPATH
-    if os.path.isdir(GPXDATAPATH):
-        exportDir = os.path.join(GPXDATAPATH, 'export')
+    parser = argparse.ArgumentParser()
+    parser.add_argument("gpxlocation", help="The location where the GPX files are located (parsing is recursive)", \
+                        type=str)
+    args = parser.parse_args()
+    gpxlocation = args.gpxlocation
+    if not os.path.isdir(gpxlocation):
+        print "gpxlocation %s does not exits" % gpxlocation
+        sys.exit()
+    else:
+        exportDir = os.path.join(gpxlocation, 'export')
         if os.path.isdir(exportDir):
             print "Removing existing export location: %s" % exportDir
             shutil.rmtree(exportDir)
-            sleep(2)
+            sleep(2) # give some time
         os.makedirs(exportDir)
-
-        myFiles = [y for x in os.walk(GPXDATAPATH) for y in glob(os.path.join(x[0], '*.gpx'))]
-        for myFile in myFiles:
-            print "parsing: %s" % myFile
-            gpxDom = etree.parse(myFile)
-            trkpts = gpxDom.xpath('//gpx:trkpt', namespaces=GPXNAMESPACES)
-            # get all trkpt elements and store there data in a dictionary
-            for trkpt in trkpts:
-                trkptDateTime = trkpt.xpath('gpx:time', namespaces=GPXNAMESPACES)[0]
-                readTimeStamp = trkptDateTime.text
-                gpxTimestamp = None
-                # remove zulu marking (not needed for building correct sequence & sorting
-                if readTimeStamp.endswith('Z'):
-                    readTimeStamp = string.replace(readTimeStamp,'Z','')
-                    gpxTimestamp = datetime.strptime(readTimeStamp, '%Y-%m-%dT%H:%M:%S')
-                else:
-                    gpxTimestamp = datetime.strptime(readTimeStamp, '%Y-%m-%dT%H:%M:%S')
-                if gpxTimestamp is not None:
-                    GPXPoints[gpxTimestamp] = trkptToDics(trkpt) # TODO duplicates will be handled correct? or check differences?
-                    # GPXPoints[gpxTimestamp]=trkpt
-        # sort the keys of the dictionary (the datetime stamp of the trackpoint
-        sortedGPXPoints = OrderedDict(sorted(GPXPoints.items(), key=lambda t: t[0]))
+        gpxPoints = parseGPXFilesToDict(gpxlocation=gpxlocation)
 
         # create and write GPX file per day
         exportDateTime = None
         dayGPXPoints = {}
-        for datetimeStamp, GPXPoint in sortedGPXPoints.iteritems():
+        for datetimeStamp, GPXPoint in gpxPoints.iteritems():
             if exportDateTime is None:
                 exportDateTime = datetimeStamp
-            elif daysFromEpoch(datetimeStamp) > daysFromEpoch(exportDateTime):
-               #datetimeStamp.timetuple().tm_yday > exportDateTime.timetuple().tm_yday: # julian date diff.
-               if len(dayGPXPoints)>0:
-                   sortedGPXPoints = OrderedDict(sorted(dayGPXPoints.items(), key=lambda t: t[0]))
-                   dictToFile(sortedGPXPoints, exportDateTime)
+            elif daysFromEpoch(date=datetimeStamp) > daysFromEpoch(date=exportDateTime):
+               dictToFile(GPXPoints=dayGPXPoints, datetimeStamp=exportDateTime,exportDir=exportDir)
                # clear dict and start new
                dayGPXPoints.clear()
                exportDateTime=datetimeStamp
             dayGPXPoints[datetimeStamp]=GPXPoint
+        # last day
+        dictToFile(GPXPoints=dayGPXPoints, datetimeStamp=exportDateTime, exportDir=exportDir)
+        dayGPXPoints.clear()
         print "ready!"
